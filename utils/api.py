@@ -75,7 +75,7 @@ def fetch_artist_albums(artist_id, market, access_token):
     """Fetches all albums for a given artist, handling pagination."""
     headers = {"Authorization": f"Bearer {access_token}"}
     base_url = f"https://api.spotify.com/v1/artists/{artist_id}/albums"
-    params = {"limit": 50, "market": market, "include_groups": "album,single,compilation"}
+    params = {"limit": 50, "market": market, "include_groups": "album,single,compilation,Compilation"}
     albums = paginate_api_call(base_url, headers, params=params)
     seen_ids = set()
     unique_albums = []
