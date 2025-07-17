@@ -92,6 +92,7 @@ def main():
                         )
                     with col2:
                         st.dataframe(df, use_container_width=True, hide_index=True)
+                    st.divider()
 
 if __name__ == "__main__":
     main()
