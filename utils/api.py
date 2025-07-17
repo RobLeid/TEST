@@ -72,17 +72,31 @@ def fetch_tracks_by_ids(track_ids, access_token):
     return tracks
 
 def fetch_artist_albums(artist_id, market, access_token):
-    """Fetches all albums for a given artist, handling pagination."""
+    """
+    Fetches all albums, singles, and compilations for a given artist
+    using separate API calls for each group, handling pagination.
+    """
     headers = {"Authorization": f"Bearer {access_token}"}
     base_url = f"https://api.spotify.com/v1/artists/{artist_id}/albums"
-    params = {"limit": 50, "market": market, "include_groups": "album,single,compilation"}
-    albums = paginate_api_call(base_url, headers, params=params)
+    album_groups = ['album', 'single', 'compilation']
+    all_albums = []
+    
+    for group in album_groups:
+        params = {
+            "limit": 50, 
+            "market": market, 
+            "include_groups": group
+        }
+        albums_for_group = paginate_api_call(base_url, headers, params=params)
+        all_albums.extend(albums_for_group)
+        
     seen_ids = set()
     unique_albums = []
-    for album in albums:
+    for album in all_albums:
         if album["id"] not in seen_ids:
             seen_ids.add(album["id"])
             unique_albums.append(album)
+            
     return unique_albums
 
 def fetch_album_details(album_id, access_token):
