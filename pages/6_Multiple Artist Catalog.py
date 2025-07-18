@@ -2,8 +2,9 @@ import streamlit as st
 import pandas as pd
 import time
 from utils.auth import get_access_token
-from utils.api import fetch_multiple_artists_catalogs_super_optimized, RateLimitExceeded
-from utils.parsing import parse_multi_spotify_ids
+from utils.api_improved import SpotifyAPIClient
+from utils.rate_limiting import RateLimitExceeded
+from utils.validation import parse_multi_spotify_ids_secure
 from utils.tools import to_excel
 from utils.data_processing import process_artist_album_data
 
@@ -27,7 +28,7 @@ def main():
     market = st.selectbox("Select Market (Country Code)", MARKETS, index=MARKETS.index("US"))
 
     if st.button("🔍 Process Artists"):
-        artist_ids = parse_multi_spotify_ids(artist_input, 'artist')
+        artist_ids = parse_multi_spotify_ids_secure(artist_input, 'artist')
         if not artist_ids:
             st.error("Please enter at least one valid artist ID.")
             return
@@ -35,6 +36,9 @@ def main():
         access_token = get_access_token()
         if not access_token:
             return
+        
+        # Initialize the improved API client
+        spotify_client = SpotifyAPIClient(access_token)
             
         # Show processing info
         st.info(f"🎯 Processing {len(artist_ids)} artists with super-optimized batch processing")
@@ -46,8 +50,8 @@ def main():
         with st.status("⏳ Processing with optimized batching...", expanded=True) as status:
             try:
                 status.update(label="Starting super-optimized batch processing...", state="running")
-                results = fetch_multiple_artists_catalogs_super_optimized(
-                    artist_ids, market, access_token, max_retries=5
+                results = spotify_client.fetch_multiple_artists_catalogs(
+                    artist_ids, market
                 )
                 
                 total_albums = 0
@@ -116,14 +120,19 @@ def main():
         if all_data:
             df = pd.DataFrame(all_data)
             
-            st.dataframe(df, use_container_width=True, hide_index=True)
-            
-            st.download_button(
-                label=f"📥 Download Excel File ({len(all_data)} tracks)",
-                data=to_excel(df),
-                file_name=f"Multiple_Artists_Releases_{len(artist_ids)}_artists.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            if not df.empty:
+                st.dataframe(df, use_container_width=True, hide_index=True)
+                
+                excel_data = to_excel(df)
+                if excel_data is not None:
+                    st.download_button(
+                        label=f"📥 Download Excel File ({len(all_data)} tracks)",
+                        data=excel_data,
+                        file_name=f"Multiple_Artists_Releases_{len(artist_ids)}_artists.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+            else:
+                st.warning("No track data to display")
                 
         else:
             st.error("❌ No data was successfully retrieved. This could be due to:")

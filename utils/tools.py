@@ -4,8 +4,12 @@ import streamlit as st
 
 def to_excel(df):
     """Convert DataFrame to Excel format for download"""
+    if df is None:
+        st.error("❌ Cannot create Excel file from None dataset")
+        return None
+        
     if df.empty:
-        st.error("❌ Cannot create Excel file from empty dataset")
+        st.warning("⚠️ Dataset is empty - no Excel file generated")
         return None
     
     output = BytesIO()
@@ -51,6 +55,10 @@ def to_excel(df):
 
 def to_excel_basic(df):
     """Basic Excel generation without formatting (fallback)"""
+    if df is None or df.empty:
+        st.error("❌ Cannot create basic Excel file from empty/None dataset")
+        return None
+        
     output = BytesIO()
     
     try:

@@ -1,8 +1,9 @@
 import pandas as pd
 import streamlit as st
 from utils.auth import get_access_token
-from utils.api import fetch_tracks_by_ids_batched, RateLimitExceeded
-from utils.parsing import parse_multi_spotify_ids
+from utils.api_improved import SpotifyAPIClient
+from utils.rate_limiting import RateLimitExceeded
+from utils.validation import parse_multi_spotify_ids_secure
 from utils.tools import to_excel
 from utils.data_processing import process_track_data
 
@@ -15,7 +16,7 @@ def main():
             st.warning("Please enter at least one track ID, URI, or URL.")
             return
 
-        track_ids = parse_multi_spotify_ids(user_input, 'track')
+        track_ids = parse_multi_spotify_ids_secure(user_input, 'track')
         if not track_ids:
             st.warning("No valid track IDs found.")
             return
@@ -24,29 +25,33 @@ def main():
         num_batches = (len(track_ids) + 49) // 50  # 50 tracks per batch
         st.info(f"🎯 Processing {len(track_ids)} tracks in {num_batches} batch(es) of up to 50 tracks each")
 
+        # Initialize variables for results
+        tracks_df = None
+        excel_data = None
+        
         with st.status("⏳ Processing...", expanded=True) as status:
             access_token = get_access_token()
             if not access_token:
                 status.update(label="Authentication failed.", state="error", expanded=False)
                 return
             
+            # Initialize the improved API client
+            spotify_client = SpotifyAPIClient(access_token)
+            
             try:
                 status.update(label="Fetching track data with optimized batch processing...", state="running", expanded=True)
                 
-                # Use optimized function with maximum batch size and better 429 handling
-                tracks = fetch_tracks_by_ids_batched(track_ids, access_token, batch_size=50, max_retries=5)
+                # Use improved API client with better error handling
+                tracks = spotify_client.fetch_tracks_by_ids(track_ids)
                 
                 if tracks:
                     df = pd.DataFrame(process_track_data(tracks))
-                    st.dataframe(df, use_container_width=True, hide_index=True)
-                    excel_data = to_excel(df)
-                    st.download_button(
-                        label="📥 Download as Excel",
-                        data=excel_data,
-                        file_name="spotify_tracks.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                    status.update(label="✅ Done!", state="complete", expanded=False)
+                    if not df.empty:
+                        tracks_df = df
+                        excel_data = to_excel(df)
+                        status.update(label="✅ Done!", state="complete", expanded=False)
+                    else:
+                        status.update(label="No valid track data found.", state="warning", expanded=False)
                 else:
                     status.update(label="No valid tracks found.", state="warning", expanded=False)
                     
@@ -56,6 +61,17 @@ def main():
                 st.info("💡 **Tips to avoid rate limits:**\n- Wait a few minutes before trying again\n- Process fewer tracks at once\n- The improved error handling will automatically retry with delays")
             except Exception as e:
                 status.update(label=f"Error: {str(e)}", state="error", expanded=False)
+        
+        # Display results outside the status box
+        if tracks_df is not None:
+            st.dataframe(tracks_df, use_container_width=True, hide_index=True)
+            if excel_data is not None:
+                st.download_button(
+                    label="📥 Download as Excel",
+                    data=excel_data,
+                    file_name="spotify_tracks.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
 
 if __name__ == "__main__":
     main()

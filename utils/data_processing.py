@@ -32,6 +32,9 @@ def get_artist_names(artists):
 
 def process_track_data(tracks):
     """Processes raw track JSON data into a simplified format for a DataFrame."""
+    if not tracks:
+        return []
+    
     simplified_data = []
     
     for track in tracks:
@@ -47,8 +50,10 @@ def process_track_data(tracks):
                 "Explicit": "Yes" if track.get("explicit", False) else "No",
                 "Spotify URL": safe_get(track.get("external_urls", {}), "spotify", "N/A")
             })
-        except Exception:
-            # Skip tracks that can't be processed
+        except Exception as e:
+            # Skip tracks that can't be processed but log the error
+            import streamlit as st
+            st.warning(f"Skipped track due to processing error: {str(e)}")
             continue
     
     return simplified_data
