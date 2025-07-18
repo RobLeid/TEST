@@ -4,7 +4,7 @@ from PIL import Image
 from urllib.request import urlopen
 
 from utils.auth import get_access_token
-from utils.api import fetch_artist_albums, fetch_album_details
+from utils.api import fetch_artist_albums_optimized, fetch_album_details_optimized, RateLimitExceeded
 from utils.parsing import parse_spotify_id
 from utils.tools import to_excel
 from utils.data_processing import process_artist_album_data
@@ -38,39 +38,54 @@ def main():
         if not access_token:
             return
 
+        st.info("🎯 Using optimized batch processing with maximum batch sizes and better rate limit handling")
+
         all_dataframes = []
         album_sections = {}
 
         with st.status("⏳ Fetching artist albums...", expanded=True) as status:
-            albums = fetch_artist_albums(artist_id, market, access_token)
-            if not albums:
-                status.update(label="No albums found for this artist.", state="warning", expanded=False)
-                return
-            status.update(label=f"Found {len(albums)} albums. Processing...", state="running")
-            
-            for group_name, albums_list in {g: [a for a in albums if a.get("album_type") == g] for g in ["album", "single", "compilation"]}.items():
-                section_dataframes = []
-                for i, album in enumerate(albums_list):
-                    status.update(label=f"Processing {group_name} {i+1}/{len(albums_list)}: {album['name']}", state="running")
-                    album_data, track_items, full_tracks = fetch_album_details(album["id"], access_token)
-                    if album_data and full_tracks:
-                        tracks = process_artist_album_data(album_data, track_items, full_tracks)
-                        df = pd.DataFrame(tracks)
-                        section_dataframes.append((df, album_data.get("name"), album_data["images"][0]["url"] if album_data.get("images") else None, album_data["id"]))
+            try:
+                status.update(label="Fetching artist discography with optimized pagination...", state="running")
+                albums = fetch_artist_albums_optimized(artist_id, market, access_token, max_retries=5)
+                if not albums:
+                    status.update(label="No albums found for this artist.", state="warning", expanded=False)
+                    return
+                    
+                status.update(label=f"Found {len(albums)} albums. Processing with optimized batching...", state="running")
+                
+                for group_name, albums_list in {g: [a for a in albums if a.get("album_type") == g] for g in ["album", "single", "compilation"]}.items():
+                    section_dataframes = []
+                    for i, album in enumerate(albums_list):
+                        status.update(label=f"Processing {group_name} {i+1}/{len(albums_list)}: {album['name']}", state="running")
+                        try:
+                            album_data, track_items, full_tracks = fetch_album_details_optimized(album["id"], access_token, max_retries=5)
+                            if album_data and full_tracks:
+                                tracks = process_artist_album_data(album_data, track_items, full_tracks)
+                                df = pd.DataFrame(tracks)
+                                section_dataframes.append((df, album_data.get("name"), album_data["images"][0]["url"] if album_data.get("images") else None, album_data["id"]))
+                        except (RateLimitExceeded, Exception) as e:
+                            st.warning(f"Failed to process album {album['name']}: {str(e)}")
+                            continue
 
-                album_sections[group_name] = section_dataframes
-                all_dataframes.extend([df for df, _, _, _ in section_dataframes])
+                    album_sections[group_name] = section_dataframes
+                    all_dataframes.extend([df for df, _, _, _ in section_dataframes])
+                    
+            except RateLimitExceeded:
+                st.error("⏱️ Rate limit exceeded. Returning partial data.")
+                st.info("💡 **Tips:**\n- Wait a few minutes before trying again\n- Try processing fewer albums\n- The optimized version uses maximum batch sizes to minimize requests")
+            except Exception as e:
+                st.error(f"Error fetching albums: {str(e)}")
         
-        status.update(label="✅ Done processing all albums!", state="complete", expanded=False)
-
         if all_dataframes:
+            status.update(label="✅ Done processing all albums!", state="complete", expanded=False)
+            
             combined_df = pd.concat(all_dataframes, ignore_index=True)
             st.download_button(
                 label="📦 Download All Albums to Excel",
                 data=to_excel(combined_df),
                 file_name="Single_Artist_Releases.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="download_all_albums" # Unique key for the global button
+                key="download_all_albums"
             )
 
         for group_name, section_dataframes in album_sections.items():
@@ -81,14 +96,17 @@ def main():
                     col1, col2 = st.columns([1, 3])
                     with col1:
                         if album_image_url:
-                            image = Image.open(urlopen(album_image_url))
-                            st.image(image, caption=album_name)
+                            try:
+                                image = Image.open(urlopen(album_image_url))
+                                st.image(image, caption=album_name)
+                            except:
+                                st.write(f"🖼️ {album_name}")
                         st.download_button(
                             label="📥 Download Excel",
                             data=to_excel(df),
                             file_name=f"{album_name}_tracks.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key=f"download_{album_id}" # Unique key for each album button
+                            key=f"download_{album_id}"
                         )
                     with col2:
                         st.dataframe(df, use_container_width=True, hide_index=True)
