@@ -8,8 +8,7 @@ from utils.constants import MARKETS
 from utils.ui_components import (
     create_download_button,
     display_processing_info,
-    display_rate_limit_error,
-    display_album_row
+    display_rate_limit_error
 )
 from utils.common_operations import get_authenticated_client
 
@@ -32,8 +31,6 @@ def main():
         display_processing_info(f"Processing {len(artist_ids)} artists...")
 
         all_data = []
-        all_dataframes = []
-        album_sections = {}
         start_time = time.time()
 
         with st.status("⏳ Processing multiple artists...", expanded=False) as status:
@@ -106,21 +103,8 @@ def main():
                                 tracks = process_artist_album_data(album_data, track_items, full_tracks)
                                 all_data.extend(tracks)
                                 
-                                # Create dataframe for this album
-                                df = pd.DataFrame(tracks)
-                                all_dataframes.append(df)
-                                
-                                # Group by album type for display
-                                album_type = album.get("album_type", "album")
-                                if album_type not in album_sections:
-                                    album_sections[album_type] = []
-                                
-                                album_sections[album_type].append((
-                                    df,
-                                    album_data.get("name"),
-                                    album_data["images"][0]["url"] if album_data.get("images") else None,
-                                    album_data["id"]
-                                ))
+                                # Just add to all_data for bulk download
+                                # No individual dataframes needed for bulk operation
                 
                 elapsed = time.time() - start_time
                 status_message = f"✅ Completed! Processed {len(artist_ids)} artist(s), {len(all_data)} tracks in {elapsed:.2f}s"
@@ -135,27 +119,38 @@ def main():
                 st.error(f"❌ Unexpected error: {e}")
                 status.update(label=f"❌ Error occurred - returning partial data ({elapsed:.2f}s)", state="error", expanded=False)
 
-        if all_dataframes:
-            combined_df = pd.concat(all_dataframes, ignore_index=True)
-            if not combined_df.empty:
+        if all_data:
+            # Create summary statistics
+            df = pd.DataFrame(all_data)
+            
+            if not df.empty:
+                # Display summary information
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Artists", len(artist_ids))
+                with col2:
+                    st.metric("Total Tracks", len(df))
+                with col3:
+                    if 'elapsed' in locals():
+                        st.metric("Processing Time", f"{elapsed:.2f}s")
+                    else:
+                        st.metric("Processing Time", "N/A")
+                
+                # Show summary by artist
+                st.subheader("📊 Summary by Artist")
+                artist_summary = df.groupby('Artist').agg({
+                    'Track': 'count',
+                    'Album': 'nunique'
+                }).rename(columns={'Track': 'Total Tracks', 'Album': 'Total Albums'})
+                st.dataframe(artist_summary, use_container_width=True)
+                
+                # Single download button for all data
                 create_download_button(
-                    df=combined_df,
-                    label=f"📦 Download All Albums to Excel ({len(all_data)} tracks)",
+                    df=df,
+                    label=f"📦 Download All Data to Excel ({len(df)} tracks)",
                     file_name=f"Multiple_Artists_Releases_{len(artist_ids)}_artists.xlsx",
                     key="download_all_albums"
                 )
-                
-                # Display albums by type (already grouped during processing)
-                for group_name, section_dataframes in album_sections.items():
-                    if section_dataframes:
-                        st.header(group_name.capitalize() + "s")
-                        st.divider()
-                        for album_df, album_name, album_image_url, album_id in section_dataframes:
-                            album_data = {
-                                "name": album_name,
-                                "images": [{"url": album_image_url}] if album_image_url else []
-                            }
-                            display_album_row(album_data, album_df, album_id)
 
         else:
             st.error("❌ No data was successfully retrieved. This could be due to:")
