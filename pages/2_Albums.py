@@ -1,14 +1,16 @@
 import pandas as pd
 import streamlit as st
-from PIL import Image
-from urllib.request import urlopen
 
-from utils.auth import get_access_token
-from utils.api_improved import SpotifyAPIClient
 from utils.rate_limiting import RateLimitExceeded
 from utils.validation import parse_multi_spotify_ids_secure
-from utils.tools import to_excel
 from utils.data_processing import process_album_track_data
+from utils.ui_components import (
+    create_download_button,
+    display_processing_info,
+    display_rate_limit_error,
+    display_album_row
+)
+from utils.common_operations import get_authenticated_client
 
 def main():
     st.title("💿 Spotify Album Info")
@@ -25,15 +27,12 @@ def main():
             return
 
         # Show processing info
-        st.info(f"🎯 Processing {len(album_ids)} albums with super-optimized batch processing")
+        display_processing_info(f"Processing {len(album_ids)} albums with super-optimized batch processing")
         st.info(f"🚀 This optimization reduces API calls from {len(album_ids)*2}+ to just 3-4 calls, virtually eliminating rate limit issues!")
 
-        access_token = get_access_token()
-        if not access_token:
+        spotify_client = get_authenticated_client()
+        if not spotify_client:
             return
-        
-        # Initialize the improved API client
-        spotify_client = SpotifyAPIClient(access_token)
         
         all_dataframes = []
         album_details_list = []
@@ -105,8 +104,7 @@ def main():
                         
             except RateLimitExceeded:
                 status.update(label="⏱️ Rate limit exceeded - returning partial results", state="error", expanded=False)
-                st.error("**Rate limit hit!** The optimized version uses better retry logic, but Spotify's API has usage limits.")
-                st.info("💡 **Tips:** Wait a few minutes, then try fewer albums at once")
+                display_rate_limit_error()
             except Exception as e:
                 st.error(f"Error: {str(e)}")
         
@@ -115,37 +113,19 @@ def main():
             
             combined_df = pd.concat(all_dataframes, ignore_index=True)
             if not combined_df.empty:
-                global_excel = to_excel(combined_df)
-                if global_excel is not None:
-                    st.download_button(
-                        label="📦 Download All Albums to Excel",
-                        data=global_excel,
-                        file_name="All_Albums_Tracks.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="download_all_albums"
-            )
+                create_download_button(
+                    df=combined_df,
+                    label="📦 Download All Albums to Excel",
+                    file_name="All_Albums_Tracks.xlsx",
+                    key="download_all_albums"
+                )
 
             for album_details in album_details_list:
-                st.divider()
-                col1, col2 = st.columns([1, 3])
-                with col1:
-                    if album_details["image_url"]:
-                        try:
-                            image = Image.open(urlopen(album_details["image_url"]))
-                            st.image(image, caption=album_details["name"])
-                        except:
-                            st.write(f"🖼️ {album_details['name']}")
-                    album_excel = to_excel(album_details["df"])
-                    if album_excel is not None:
-                        st.download_button(
-                            label=f"📥 Download Excel",
-                            data=album_excel,
-                            file_name=f"{album_details['name']}_tracks.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key=f"download_{album_details['id']}"
-                        )
-                with col2:
-                    st.dataframe(album_details["df"], use_container_width=True, hide_index=True)
+                album_data = {
+                    "name": album_details["name"],
+                    "images": [{"url": album_details["image_url"]}] if album_details["image_url"] else []
+                }
+                display_album_row(album_data, album_details["df"], album_details["id"])
 
 if __name__ == "__main__":
     main()

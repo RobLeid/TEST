@@ -3,12 +3,15 @@ import streamlit as st
 from PIL import Image
 from urllib.request import urlopen
 
-from utils.auth import get_access_token
-from utils.api_improved import SpotifyAPIClient
 from utils.rate_limiting import RateLimitExceeded
 from utils.validation import parse_spotify_id_secure
-from utils.tools import to_excel
 from utils.data_processing import process_track_data
+from utils.ui_components import (
+    create_download_button,
+    display_processing_info,
+    display_rate_limit_error
+)
+from utils.common_operations import get_authenticated_client
 
 def main():
     st.title("🎤 Spotify Artist Top Tracks")
@@ -19,22 +22,17 @@ def main():
         if not artist_id:
             return
 
-        st.info("🎯 Using optimized artist processing with better rate limit handling")
+        display_processing_info("Using optimized artist processing with better rate limit handling")
 
         # Initialize variables for results
         tracks_df = None
-        excel_data = None
         artist_name = None
         artist_image_url = None
         
         with st.status("⏳ Fetching artist info...", expanded=True) as status:
-            access_token = get_access_token()
-            if not access_token:
-                status.update(label="Authentication failed.", state="error", expanded=False)
+            spotify_client = get_authenticated_client()
+            if not spotify_client:
                 return
-            
-            # Initialize the improved API client
-            spotify_client = SpotifyAPIClient(access_token)
             
             try:
                 status.update(label="Fetching artist data with improved retry logic...", state="running", expanded=True)
@@ -49,7 +47,6 @@ def main():
 
                     if not df.empty:
                         tracks_df = df
-                        excel_data = to_excel(df)
                         status.update(label="✅ Done!", state="complete", expanded=False)
                     else:
                         status.update(label="No track data found.", state="warning", expanded=False)
@@ -58,8 +55,7 @@ def main():
                     
             except RateLimitExceeded:
                 status.update(label="⏱️ Rate limit exceeded - please try again later", state="error", expanded=False)
-                st.error("**Rate limit hit!** The optimized version uses better retry logic.")
-                st.info("💡 **Tips:**\n- Wait a few minutes before trying again\n- Artist top tracks is a lightweight operation, so rate limits are rare here")
+                display_rate_limit_error()
             except Exception as e:
                 status.update(label=f"Error: {str(e)}", state="error", expanded=False)
         
@@ -67,13 +63,12 @@ def main():
         if tracks_df is not None and artist_name:
             st.info(f"📊 Found {len(tracks_df)} top tracks for {artist_name}")
             st.dataframe(tracks_df, use_container_width=True, hide_index=True)
-            if excel_data is not None:
-                st.download_button(
-                    label="📥 Download as Excel",
-                    data=excel_data,
-                    file_name="artist_top_tracks.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+            create_download_button(
+                df=tracks_df,
+                label="📥 Download as Excel",
+                file_name="artist_top_tracks.xlsx",
+                key="download_top_tracks"
+            )
                 
         # Display artist image outside the status box
         if artist_image_url and artist_name:

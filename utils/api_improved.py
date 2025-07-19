@@ -76,12 +76,13 @@ class SpotifyAPIClient:
             st.error(f"❌ Request failed: {e}")
             return None
     
-    def fetch_tracks_by_ids(self, track_ids: List[str]) -> List[Dict]:
+    def fetch_tracks_by_ids(self, track_ids: List[str], status_callback=None) -> List[Dict]:
         """
         Fetch multiple tracks by their IDs using optimal batching.
         
         Args:
             track_ids: List of Spotify track IDs
+            status_callback: Optional callback function to update status (instead of st.write)
             
         Returns:
             List of track data dictionaries
@@ -101,22 +102,29 @@ class SpotifyAPIClient:
             batch = valid_ids[i:i + TRACKS_BATCH_SIZE]
             batch_ids = ",".join(batch)
             
-            st.write(f"📥 Fetching track batch {i//TRACKS_BATCH_SIZE + 1}/{total_batches}: {len(batch)} tracks")
+            batch_num = i//TRACKS_BATCH_SIZE + 1
+            if status_callback:
+                status_callback(f"Fetching track batch {batch_num}/{total_batches}: {len(batch)} tracks")
+            else:
+                st.write(f"📥 Fetching track batch {batch_num}/{total_batches}: {len(batch)} tracks")
             
             response = self._make_request(f"tracks?ids={batch_ids}")
             
             if response and "tracks" in response:
                 valid_tracks = [track for track in response["tracks"] if track is not None]
                 all_tracks.extend(valid_tracks)
-                st.success(f"✅ Batch {i//TRACKS_BATCH_SIZE + 1} complete: {len(valid_tracks)} tracks retrieved")
+                if not status_callback:
+                    st.success(f"✅ Batch {batch_num} complete: {len(valid_tracks)} tracks retrieved")
             else:
-                st.warning(f"⚠️ Batch {i//TRACKS_BATCH_SIZE + 1} returned no data")
+                if not status_callback:
+                    st.warning(f"⚠️ Batch {batch_num} returned no data")
             
             # Delay between batches
             if i + TRACKS_BATCH_SIZE < len(valid_ids):
                 time.sleep(INTER_BATCH_DELAY)
         
-        st.info(f"📊 Retrieved {len(all_tracks)} tracks total")
+        if not status_callback:
+            st.info(f"📊 Retrieved {len(all_tracks)} tracks total")
         return all_tracks
     
     def fetch_album_details(self, album_id: str) -> Tuple[Optional[Dict], List[Dict]]:
@@ -251,7 +259,7 @@ class SpotifyAPIClient:
         
         return artist_data, top_tracks_data.get("tracks", [])
     
-    def fetch_artist_albums_by_type(self, artist_id: str, album_type: str, market: str = DEFAULT_MARKET) -> List[Dict]:
+    def fetch_artist_albums_by_type(self, artist_id: str, album_type: str, market: str = DEFAULT_MARKET, quiet: bool = False) -> List[Dict]:
         """
         Fetch artist albums for a specific type (album, single, compilation).
         
@@ -259,16 +267,19 @@ class SpotifyAPIClient:
             artist_id: Spotify artist ID
             album_type: Type of album (album, single, compilation)
             market: Market code
+            quiet: If True, suppress status messages
             
         Returns:
             List of album data dictionaries
         """
         if not validate_spotify_id(artist_id, 'artist'):
-            st.error(f"Invalid artist ID: {artist_id}")
+            if not quiet:
+                st.error(f"Invalid artist ID: {artist_id}")
             return []
         
         if album_type not in ALBUM_TYPES:
-            st.error(f"Invalid album type: {album_type}")
+            if not quiet:
+                st.error(f"Invalid album type: {album_type}")
             return []
         
         all_albums = []
@@ -281,7 +292,8 @@ class SpotifyAPIClient:
         page = 1
         
         while url:
-            st.write(f"📥 Fetching {album_type} albums page {page}...")
+            if not quiet:
+                st.write(f"📥 Fetching {album_type} albums page {page}...")
             
             # Extract just the endpoint from the URL if it's a full URL
             if url.startswith('http'):
@@ -312,10 +324,11 @@ class SpotifyAPIClient:
             if url:
                 time.sleep(INTER_PAGE_DELAY)
         
-        st.info(f"📊 Found {len(all_albums)} {album_type} albums")
+        if not quiet:
+            st.info(f"📊 Found {len(all_albums)} {album_type} albums")
         return all_albums
     
-    def fetch_artist_albums_comprehensive(self, artist_id: str, market: str = DEFAULT_MARKET) -> List[Dict]:
+    def fetch_artist_albums_comprehensive(self, artist_id: str, market: str = DEFAULT_MARKET, quiet: bool = False) -> List[Dict]:
         """
         Fetch ALL artist albums by querying each type separately.
         This ensures compilations are included.
@@ -323,12 +336,17 @@ class SpotifyAPIClient:
         Args:
             artist_id: Spotify artist ID
             market: Market code
+            quiet: If True, suppress status messages
             
         Returns:
             List of all album data dictionaries
         """
         if not validate_spotify_id(artist_id, 'artist'):
-            st.error(f"Invalid artist ID: {artist_id}")
+            error_msg = f"Invalid artist ID: {artist_id}"
+            if not quiet:
+                st.error(error_msg)
+            else:
+                st.warning(error_msg)  # Always show validation errors even in quiet mode
             return []
         
         all_albums = []
@@ -336,8 +354,9 @@ class SpotifyAPIClient:
         
         # Query each album type separately
         for album_type in ALBUM_TYPES:
-            st.write(f"🎵 Fetching {album_type} albums...")
-            albums = self.fetch_artist_albums_by_type(artist_id, album_type, market)
+            if not quiet:
+                st.write(f"🎵 Fetching {album_type} albums...")
+            albums = self.fetch_artist_albums_by_type(artist_id, album_type, market, quiet=quiet)
             
             # Deduplicate albums
             for album in albums:
@@ -345,14 +364,16 @@ class SpotifyAPIClient:
                     all_albums.append(album)
                     seen_ids.add(album.get("id"))
         
-        st.success(f"✅ Found {len(all_albums)} total albums across all types")
+        if not quiet:
+            st.success(f"✅ Found {len(all_albums)} total albums across all types")
         return all_albums
     
     def fetch_multiple_artists_catalogs(
         self,
         artist_ids: List[str],
         market: str = DEFAULT_MARKET,
-        max_workers: int = MAX_WORKERS
+        max_workers: int = MAX_WORKERS,
+        status_callback=None
     ) -> Dict[str, Any]:
         """
         Fetch catalogs for multiple artists with improved threading.
@@ -361,6 +382,7 @@ class SpotifyAPIClient:
             artist_ids: List of Spotify artist IDs
             market: Market code
             max_workers: Maximum concurrent threads
+            status_callback: Optional callback function to update status
             
         Returns:
             Dictionary mapping artist IDs to their catalog data
@@ -375,43 +397,76 @@ class SpotifyAPIClient:
         def process_artist(artist_id: str) -> Tuple[str, Dict]:
             """Process a single artist's catalog"""
             try:
-                # Get albums using comprehensive method
-                albums = self.fetch_artist_albums_comprehensive(artist_id, market)
+                # Process artist
+                
+                # Get albums using comprehensive method (with suppressed output for multiple artist mode)
+                original_status_callback = status_callback
+                def quiet_status(message):
+                    if original_status_callback:
+                        original_status_callback(f"Artist {artist_id} - {message}")
+                
+                albums = self.fetch_artist_albums_comprehensive(artist_id, market, quiet=True)
+                
+                if not albums:
+                    st.warning(f"⚠️ No albums found for artist {artist_id}")
+                    return artist_id, {"albums": [], "album_data": {}, "tracks": [], "failed_albums": []}
                 
                 # Get album details in batches
                 album_ids = [album["id"] for album in albums]
                 album_data = {}
                 all_track_ids = []
+                failed_albums = []
                 
                 # Process albums in batches
+                total_album_batches = (len(album_ids) + ALBUMS_BATCH_SIZE - 1) // ALBUMS_BATCH_SIZE
                 for i in range(0, len(album_ids), ALBUMS_BATCH_SIZE):
                     batch_ids = album_ids[i:i + ALBUMS_BATCH_SIZE]
                     batch_ids_str = ",".join(batch_ids)
                     
-                    st.write(f"📥 Fetching album batch {i//ALBUMS_BATCH_SIZE + 1} for artist {artist_id}")
+                    batch_num = i//ALBUMS_BATCH_SIZE + 1
+                    if status_callback:
+                        status_callback(f"Processing artist {artist_id} - album batch {batch_num}/{total_album_batches}")
                     
                     response = self._make_request(f"albums?ids={batch_ids_str}")
                     
                     if response and "albums" in response:
-                        for album in response["albums"]:
+                        for j, album in enumerate(response["albums"]):
                             if album:
                                 album_data[album["id"]] = album
                                 # Collect all track IDs
                                 track_items = album.get("tracks", {}).get("items", [])
                                 track_ids = [track["id"] for track in track_items if track.get("id")]
                                 all_track_ids.extend(track_ids)
+                            else:
+                                # Track failed album
+                                failed_album_id = batch_ids[j] if j < len(batch_ids) else "unknown"
+                                failed_albums.append(failed_album_id)
+                                st.warning(f"⚠️ Failed to get data for album {failed_album_id}")
+                    else:
+                        # All albums in this batch failed
+                        failed_albums.extend(batch_ids)
+                        st.error(f"❌ Failed to fetch album batch {batch_num} for artist {artist_id}")
                     
                     # Delay between album batches
                     time.sleep(INTER_BATCH_DELAY)
                 
+                if not all_track_ids:
+                    st.warning(f"⚠️ No track IDs found for artist {artist_id}")
+                    return artist_id, {"albums": albums, "album_data": album_data, "tracks": [], "failed_albums": failed_albums}
+                
                 # Fetch all tracks for this artist
-                all_tracks = self.fetch_tracks_by_ids(all_track_ids)
+                if status_callback:
+                    def track_status_callback(message):
+                        status_callback(f"Artist {artist_id} - {message}")
+                    all_tracks = self.fetch_tracks_by_ids(all_track_ids, status_callback=track_status_callback)
+                else:
+                    all_tracks = self.fetch_tracks_by_ids(all_track_ids)
                 
                 return artist_id, {
                     "albums": albums,
                     "album_data": album_data,
                     "tracks": all_tracks,
-                    "failed_albums": []
+                    "failed_albums": failed_albums
                 }
                 
             except Exception as e:
@@ -421,10 +476,17 @@ class SpotifyAPIClient:
         # Process artists with limited concurrency
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_artist = {executor.submit(process_artist, artist_id): artist_id for artist_id in valid_ids}
+            completed_count = 0
             
             for future in as_completed(future_to_artist):
                 artist_id, result = future.result()
                 results[artist_id] = result
+                completed_count += 1
+                
+                if status_callback:
+                    status_callback(f"Completed artist {completed_count}/{len(valid_ids)}: {artist_id}")
+                else:
+                    st.success(f"✅ Completed artist {completed_count}/{len(valid_ids)}: {artist_id}")
         
         return results
 

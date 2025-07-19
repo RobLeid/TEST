@@ -159,11 +159,10 @@ def parse_multi_spotify_ids_secure(user_input: str, item_type: str) -> List[str]
         return []
     
     try:
-        # Sanitize input
-        sanitized_input = sanitize_input(user_input)
-        
+        # Don't sanitize here - parse_spotify_id_secure will do it
+        # This prevents double HTML escaping
         # Split by lines and clean
-        raw_items = [item.strip() for item in sanitized_input.splitlines() if item.strip()]
+        raw_items = [item.strip() for item in user_input.splitlines() if item.strip()]
         
         # Validate batch size
         is_valid, error_msg = validate_batch_size(raw_items, MAX_ITEMS_PER_REQUEST)
